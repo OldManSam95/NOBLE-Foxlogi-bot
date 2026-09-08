@@ -8,7 +8,42 @@ import urllib.request
 FOXLOGI_URL = "https://foxlogi.com/api/logistic/planner/"
 FOXLOGI_API_KEY = os.environ["FOXLOGI_API_KEY"].strip()
 DISCORD_WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"].strip()
-USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.1"
+USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.2"
+
+CATEGORY_LABELS = {
+    "smallarms": "Small Arms",
+    "small arms": "Small Arms",
+    "heavyarms": "Heavy Arms",
+    "heavy arms": "Heavy Arms",
+    "heavyammo": "Heavy Ammunition",
+    "heavy ammo": "Heavy Ammunition",
+    "heavy ammunition": "Heavy Ammunition",
+    "utility": "Utility",
+    "supplies": "Supplies",
+    "resources": "Resources",
+    "medical": "Medical",
+    "uniforms": "Uniforms",
+    "vehicles": "Vehicles",
+    "cratedvehicles": "Vehicles",
+    "crated vehicles": "Vehicles",
+    "structures": "Structures",
+    "cratedstructures": "Structures",
+    "crated structures": "Structures",
+}
+
+CATEGORY_ORDER = [
+    "Small Arms",
+    "Heavy Arms",
+    "Heavy Ammunition",
+    "Utility",
+    "Medical",
+    "Supplies",
+    "Resources",
+    "Uniforms",
+    "Vehicles",
+    "Structures",
+    "Other",
+]
 
 
 def get_json(url, headers=None):
@@ -52,8 +87,19 @@ def location_name(locations, location_id):
     return record_name(locations.get(str(location_id)) or locations.get(location_id), f"Location {location_id}")
 
 
-def item_name(items, item_id):
-    return record_name(items.get(str(item_id)) or items.get(item_id), f"Item {item_id}")
+def item_record(items, item_id):
+    record = items.get(str(item_id)) or items.get(item_id)
+    return record if isinstance(record, dict) else {}
+
+
+def category_name(items, item_id, fallback="Other"):
+    record = item_record(items, item_id)
+    raw = str(record.get("category") or "").strip()
+    if not raw:
+        return fallback
+    key = raw.lower().replace("_", " ")
+    compact = key.replace(" ", "")
+    return CATEGORY_LABELS.get(key) or CATEGORY_LABELS.get(compact) or raw
 
 
 def number(value):
@@ -61,6 +107,24 @@ def number(value):
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def category_sort_key(category):
+    try:
+        return (CATEGORY_ORDER.index(category), category.lower())
+    except ValueError:
+        return (len(CATEGORY_ORDER), category.lower())
+
+
+def aggregate_categories(item_quantities, items, fallback="Other"):
+    totals = {}
+    for item_id, qty in item_quantities.items():
+        qty = number(qty)
+        if qty <= 0:
+            continue
+        category = category_name(items, item_id, fallback=fallback)
+        totals[category] = totals.get(category, 0) + qty
+    return sorted(totals.items(), key=lambda x: category_sort_key(x[0]))
 
 
 def format_transport(planner, locations, items):
@@ -86,16 +150,16 @@ def format_transport(planner, locations, items):
                 for item_id, qty in group_items.items():
                     manifest[str(item_id)] = manifest.get(str(item_id), 0) + number(qty)
 
-            if not manifest:
+            categories = aggregate_categories(manifest, items)
+            if not categories:
                 continue
 
             source = location_name(locations, source_id)
             destination = location_name(locations, destination_id)
-            total = sum(qty for qty in manifest.values() if qty > 0)
+            total = sum(qty for _, qty in categories)
             lines.append(f"**{source} → {destination}** — {total:,} crates")
-            for item_id, qty in sorted(manifest.items(), key=lambda x: item_name(items, x[0]).lower()):
-                if qty > 0:
-                    lines.append(f"• {qty:,}× {item_name(items, item_id)}")
+            for category, qty in categories:
+                lines.append(f"• {category} — {qty:,} crates")
     return lines
 
 
@@ -111,13 +175,13 @@ def format_craft(planner, locations, items):
         requested = payload.get("items") or {}
         if not isinstance(requested, dict):
             continue
-        entries = [(item_id, number(qty)) for item_id, qty in requested.items() if number(qty) > 0]
-        if not entries:
+        categories = aggregate_categories(requested, items)
+        if not categories:
             continue
 
         lines.append(f"**{location_name(locations, location_id)}**")
-        for item_id, qty in sorted(entries, key=lambda x: item_name(items, x[0]).lower()):
-            lines.append(f"• {qty:,} crates — {item_name(items, item_id)}")
+        for category, qty in categories:
+            lines.append(f"• {category} — {qty:,} crates")
     return lines
 
 
@@ -130,27 +194,21 @@ def format_refinery(planner, locations, items):
     for location_id, payload in resource.items():
         if not isinstance(payload, dict):
             continue
-        formatted = []
+
+        categories = set()
         for item_id, detail in payload.items():
+            active = False
             if isinstance(detail, dict):
-                crates = number(detail.get("crates"))
-                output = number(detail.get("output"))
-                raw_input = number(detail.get("input"))
+                active = any(number(detail.get(key)) > 0 for key in ("crates", "output", "input"))
             else:
-                crates = number(detail)
-                output = 0
-                raw_input = 0
+                active = number(detail) > 0
+            if active:
+                categories.add(category_name(items, item_id, fallback="Resources"))
 
-            if crates > 0:
-                formatted.append(f"• {crates:,} crates — {item_name(items, item_id)}")
-            elif output > 0:
-                formatted.append(f"• {output:,} — {item_name(items, item_id)}")
-            elif raw_input > 0:
-                formatted.append(f"• Raw required: {raw_input:,} — {item_name(items, item_id)}")
-
-        if formatted:
+        if categories:
             lines.append(f"**{location_name(locations, location_id)}**")
-            lines.extend(formatted)
+            for category in sorted(categories, key=category_sort_key):
+                lines.append(f"• {category}")
     return lines
 
 
@@ -161,17 +219,17 @@ def format_mpf(planner, locations, items):
         return lines
 
     for location_id, payload in mpf.items():
-        lines.append(f"**{location_name(locations, location_id)}**")
-        found = False
+        categories = []
         if isinstance(payload, dict):
             requested = payload.get("items") or payload.get("total_request") or {}
             if isinstance(requested, dict):
-                for item_id, qty in sorted(requested.items(), key=lambda x: item_name(items, x[0]).lower()):
-                    qty = number(qty)
-                    if qty > 0:
-                        found = True
-                        lines.append(f"• {qty:,} crates — {item_name(items, item_id)}")
-        if not found:
+                categories = aggregate_categories(requested, items)
+
+        lines.append(f"**{location_name(locations, location_id)}**")
+        if categories:
+            for category, qty in categories:
+                lines.append(f"• {category} — {qty:,} crates")
+        else:
             lines.append("• MPF work required")
     return lines
 
