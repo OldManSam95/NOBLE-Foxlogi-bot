@@ -8,7 +8,6 @@ import foxlogi_bot as bot
 
 
 _original_draw_ranked_panel = bot.draw_ranked_panel
-_original_render_dashboard = bot.render_dashboard
 
 
 def category_column_count(card_width):
@@ -298,32 +297,205 @@ def draw_ranked_panel_with_wide_factory_mpf(
     return panel_height
 
 
-def render_dashboard_with_updated_footer(
+def draw_transport_full_height_panel(
+    draw,
+    x,
+    y,
+    width,
+    height,
+    blocks,
+):
+    """Draw Transport as one panel extending to the bottom of the dashboard."""
+    bot.rounded_box(
+        draw,
+        (
+            x,
+            y,
+            x + width,
+            y + height,
+        ),
+        fill=bot.PANEL_BG,
+        width=2,
+        radius=22,
+    )
+
+    bot.draw_panel_title(
+        draw,
+        x + 18,
+        y + 16,
+        width - 36,
+        "TRANSPORT",
+        (
+            f"{len(blocks)} active"
+            if blocks
+            else None
+        ),
+    )
+
+    cursor_y = (
+        y
+        + 16
+        + bot.font_height(bot.FONT_SECTION)
+        + 18
+    )
+
+    if not blocks:
+        draw.text(
+            (x + 18, cursor_y),
+            "No outstanding tasks",
+            font=bot.FONT_BODY,
+            fill=bot.MUTED,
+        )
+        return
+
+    inner_width = width - 36
+    card_gap = 14
+    card_width = (
+        inner_width - card_gap
+    ) // 2
+    row_height = 0
+
+    for index, block in enumerate(blocks):
+        column = index % 2
+        card_x = (
+            x
+            + 18
+            + column * (card_width + card_gap)
+        )
+
+        card_height = bot.draw_ranked_card(
+            draw,
+            card_x,
+            cursor_y,
+            card_width,
+            block,
+        )
+
+        row_height = max(row_height, card_height)
+
+        if column == 1:
+            cursor_y += row_height + card_gap
+            row_height = 0
+
+
+def render_dashboard_stacked_right(
     transport,
     factory,
     refinery,
     mpf,
 ):
-    """Render normally, then replace the old top-3 footer text."""
-    _original_render_dashboard(
-        transport,
+    """
+    Layout:
+      Left:  Transport from the top down to the bottom.
+      Right: Factory, then MPF, then Refinery stacked vertically.
+    """
+    panel_width = (
+        bot.CANVAS_WIDTH
+        - bot.MARGIN * 2
+        - bot.PANEL_GAP
+    ) // 2
+
+    factory_height = bot.ranked_panel_height(
         factory,
+        panel_width,
+    )
+    mpf_height = bot.ranked_panel_height(
+        mpf,
+        panel_width,
+    )
+    refinery_height = bot.refinery_panel_height(
         refinery,
+        panel_width,
+    )
+    transport_natural_height = bot.ranked_panel_height(
+        transport,
+        panel_width,
+    )
+
+    right_stack_height = (
+        factory_height
+        + bot.PANEL_GAP
+        + mpf_height
+        + bot.PANEL_GAP
+        + refinery_height
+    )
+
+    content_height = max(
+        right_stack_height,
+        transport_natural_height,
+    )
+
+    header_height = 110
+    canvas_height = (
+        bot.MARGIN
+        + header_height
+        + content_height
+        + bot.MARGIN
+    )
+    canvas_height = max(canvas_height, 900)
+
+    image = Image.new(
+        "RGB",
+        (bot.CANVAS_WIDTH, canvas_height),
+        bot.BACKGROUND,
+    )
+    draw = ImageDraw.Draw(image)
+
+    bot.draw_header(draw)
+
+    panel_y = bot.MARGIN + header_height
+    left_x = bot.MARGIN
+    right_x = (
+        bot.MARGIN
+        + panel_width
+        + bot.PANEL_GAP
+    )
+
+    draw_transport_full_height_panel(
+        draw,
+        left_x,
+        panel_y,
+        panel_width,
+        content_height,
+        transport,
+    )
+
+    bot.draw_ranked_panel(
+        draw,
+        right_x,
+        panel_y,
+        panel_width,
+        "FACTORY",
+        factory,
+    )
+
+    mpf_y = (
+        panel_y
+        + factory_height
+        + bot.PANEL_GAP
+    )
+
+    bot.draw_ranked_panel(
+        draw,
+        right_x,
+        mpf_y,
+        panel_width,
+        "MPF",
         mpf,
     )
 
-    image = Image.open(bot.OUTPUT_IMAGE).convert("RGB")
-    draw = ImageDraw.Draw(image)
+    refinery_y = (
+        mpf_y
+        + mpf_height
+        + bot.PANEL_GAP
+    )
 
-    clear_top = image.height - bot.MARGIN - 4
-    draw.rectangle(
-        (
-            0,
-            clear_top,
-            image.width,
-            image.height,
-        ),
-        fill=bot.BACKGROUND,
+    bot.draw_refinery_panel(
+        draw,
+        right_x,
+        refinery_y,
+        panel_width,
+        refinery,
     )
 
     footer = "Outstanding crates shown by category | Source: Foxlogi"
@@ -336,8 +508,12 @@ def render_dashboard_with_updated_footer(
 
     draw.text(
         (
-            image.width - bot.MARGIN - footer_width,
-            image.height - bot.MARGIN + 3,
+            bot.CANVAS_WIDTH
+            - bot.MARGIN
+            - footer_width,
+            canvas_height
+            - bot.MARGIN
+            + 3,
         ),
         footer,
         font=bot.FONT_SMALL,
@@ -354,7 +530,7 @@ def render_dashboard_with_updated_footer(
 bot.ranked_card_height = category_total_card_height
 bot.draw_ranked_card = draw_category_total_card
 bot.draw_ranked_panel = draw_ranked_panel_with_wide_factory_mpf
-bot.render_dashboard = render_dashboard_with_updated_footer
+bot.render_dashboard = render_dashboard_stacked_right
 
 
 if __name__ == "__main__":
