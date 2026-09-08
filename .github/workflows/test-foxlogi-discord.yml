@@ -18,4 +18,4 @@ jobs:
         env:
           FOXLOGI_API_KEY: ${{ secrets.FOXLOGI_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: python foxlogi_bot.py
+        run: python dashboard_runner.py
