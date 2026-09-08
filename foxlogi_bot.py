@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 FOXLOGI_URL = "https://foxlogi.com/api/logistic/planner/"
 FOXLOGI_API_KEY = os.environ["FOXLOGI_API_KEY"].strip()
 DISCORD_WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"].strip()
-USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.8"
+USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.9"
 
 CATEGORY_LABELS = {
     "smallarms": "Small Arms",
@@ -137,6 +137,28 @@ def aggregate_categories(item_quantities, items, fallback="Other"):
     return sorted(totals.items(), key=lambda x: category_sort_key(x[0]))
 
 
+def top_item_fields(item_quantities, items, limit=3):
+    """Create one inline field per category showing its highest-demand items."""
+    grouped = {}
+    for item_id, qty in item_quantities.items():
+        qty = number(qty)
+        if qty <= 0:
+            continue
+        category = category_name(items, item_id)
+        grouped.setdefault(category, []).append((item_name(items, item_id), qty))
+
+    fields = []
+    for category in sorted(grouped, key=category_sort_key):
+        ranked = sorted(grouped[category], key=lambda x: (-x[1], x[0].lower()))[:limit]
+        value = "\n".join(f"{name} — **{qty:,}** crates" for name, qty in ranked)
+        fields.append({
+            "name": category[:256],
+            "value": value[:1024],
+            "inline": True,
+        })
+    return fields
+
+
 def make_embed(title, fields, description=None):
     embed = {
         "title": title[:256],
@@ -230,14 +252,16 @@ def factory_embeds(planner, locations, items):
         requested = payload.get("items") or {}
         if not isinstance(requested, dict):
             continue
-        categories = aggregate_categories(requested, items)
-        if not categories:
+
+        fields = top_item_fields(requested, items, limit=3)
+        total = sum(number(qty) for qty in requested.values() if number(qty) > 0)
+        if not fields or total <= 0:
             continue
-        total = sum(qty for _, qty in categories)
+
         embeds.append(
             make_embed(
                 f"🏭 FACTORY — {location_name(locations, location_id)}",
-                category_fields(categories),
+                fields,
                 f"**{total:,} crates total**",
             )
         )
@@ -294,15 +318,16 @@ def mpf_embeds(planner, locations, items):
         return embeds
 
     for location_id, payload in mpf.items():
-        categories = []
+        requested = {}
         if isinstance(payload, dict):
-            requested = payload.get("items") or payload.get("total_request") or {}
-            if isinstance(requested, dict):
-                categories = aggregate_categories(requested, items)
+            candidate = payload.get("items") or payload.get("total_request") or {}
+            if isinstance(candidate, dict):
+                requested = candidate
 
-        if categories:
-            fields = category_fields(categories)
-            total = sum(qty for _, qty in categories)
+        fields = top_item_fields(requested, items, limit=3)
+        total = sum(number(qty) for qty in requested.values() if number(qty) > 0)
+
+        if fields and total > 0:
             description = f"**{total:,} crates total**"
         else:
             fields = [{"name": "\u200b", "value": "MPF work required", "inline": True}]
