@@ -8,7 +8,7 @@ import urllib.request
 FOXLOGI_URL = "https://foxlogi.com/api/logistic/planner/"
 FOXLOGI_API_KEY = os.environ["FOXLOGI_API_KEY"].strip()
 DISCORD_WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"].strip()
-USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.3"
+USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.4"
 
 CATEGORY_LABELS = {
     "smallarms": "Small Arms",
@@ -203,16 +203,16 @@ def format_refinery(planner, locations, items):
         for item_id, detail in sorted(payload.items(), key=lambda x: item_name(items, x[0]).lower()):
             name = item_name(items, item_id)
             if isinstance(detail, dict):
-                crates = number(detail.get("crates"))
+                amount = number(detail.get("crates"))
                 output = number(detail.get("output"))
                 raw_input = number(detail.get("input"))
             else:
-                crates = number(detail)
+                amount = number(detail)
                 output = 0
                 raw_input = 0
 
-            if crates > 0:
-                resource_lines.append(f"• {name} — {crates:,} crates")
+            if amount > 0:
+                resource_lines.append(f"• {name} — {amount:,}")
             elif output > 0:
                 resource_lines.append(f"• {name} — {output:,} output")
             elif raw_input > 0:
