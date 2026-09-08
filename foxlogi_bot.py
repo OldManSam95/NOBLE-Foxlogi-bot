@@ -8,7 +8,7 @@ import urllib.request
 FOXLOGI_URL = "https://foxlogi.com/api/logistic/planner/"
 FOXLOGI_API_KEY = os.environ["FOXLOGI_API_KEY"].strip()
 DISCORD_WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"].strip()
-USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.2"
+USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.3"
 
 CATEGORY_LABELS = {
     "smallarms": "Small Arms",
@@ -90,6 +90,10 @@ def location_name(locations, location_id):
 def item_record(items, item_id):
     record = items.get(str(item_id)) or items.get(item_id)
     return record if isinstance(record, dict) else {}
+
+
+def item_name(items, item_id):
+    return record_name(item_record(items, item_id), f"Item {item_id}")
 
 
 def category_name(items, item_id, fallback="Other"):
@@ -195,20 +199,28 @@ def format_refinery(planner, locations, items):
         if not isinstance(payload, dict):
             continue
 
-        categories = set()
-        for item_id, detail in payload.items():
-            active = False
+        resource_lines = []
+        for item_id, detail in sorted(payload.items(), key=lambda x: item_name(items, x[0]).lower()):
+            name = item_name(items, item_id)
             if isinstance(detail, dict):
-                active = any(number(detail.get(key)) > 0 for key in ("crates", "output", "input"))
+                crates = number(detail.get("crates"))
+                output = number(detail.get("output"))
+                raw_input = number(detail.get("input"))
             else:
-                active = number(detail) > 0
-            if active:
-                categories.add(category_name(items, item_id, fallback="Resources"))
+                crates = number(detail)
+                output = 0
+                raw_input = 0
 
-        if categories:
+            if crates > 0:
+                resource_lines.append(f"• {name} — {crates:,} crates")
+            elif output > 0:
+                resource_lines.append(f"• {name} — {output:,} output")
+            elif raw_input > 0:
+                resource_lines.append(f"• {name} — {raw_input:,} raw required")
+
+        if resource_lines:
             lines.append(f"**{location_name(locations, location_id)}**")
-            for category in sorted(categories, key=category_sort_key):
-                lines.append(f"• {category}")
+            lines.extend(resource_lines)
     return lines
 
 
