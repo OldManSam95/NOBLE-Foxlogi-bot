@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 FOXLOGI_URL = "https://foxlogi.com/api/logistic/planner/"
 FOXLOGI_API_KEY = os.environ["FOXLOGI_API_KEY"].strip()
 DISCORD_WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"].strip()
-USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.9"
+USER_AGENT = "NOBLE-Foxlogi-Bot-Test/1.0"
 
 CATEGORY_LABELS = {
     "smallarms": "Small Arms",
@@ -223,17 +223,17 @@ def transport_embeds(planner, locations, items):
                 for item_id, qty in group_items.items():
                     manifest[str(item_id)] = manifest.get(str(item_id), 0) + number(qty)
 
-            categories = aggregate_categories(manifest, items)
-            if not categories:
+            fields = top_item_fields(manifest, items, limit=3)
+            total = sum(number(qty) for qty in manifest.values() if number(qty) > 0)
+            if not fields or total <= 0:
                 continue
 
             source = location_name(locations, source_id)
             destination = location_name(locations, destination_id)
-            total = sum(qty for _, qty in categories)
             embeds.append(
                 make_embed(
                     f"🚛 TRANSPORT — {source} → {destination}",
-                    category_fields(categories),
+                    fields,
                     f"**{total:,} crates total**",
                 )
             )
