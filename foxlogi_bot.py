@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 FOXLOGI_URL = "https://foxlogi.com/api/logistic/planner/"
 FOXLOGI_API_KEY = os.environ["FOXLOGI_API_KEY"].strip()
 DISCORD_WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"].strip()
-USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.5"
+USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.6"
 
 CATEGORY_LABELS = {
     "smallarms": "Small Arms",
@@ -149,12 +149,33 @@ def make_embed(title, fields, description=None):
     return embed
 
 
-def category_fields(categories, unit="crates"):
+def three_column_fields(entries, heading="Production"):
+    """Pack label/value pairs into three dense inline Discord fields."""
+    if not entries:
+        return []
+
+    column_count = min(3, len(entries))
+    base, extra = divmod(len(entries), column_count)
     fields = []
-    for category, qty in categories:
-        value = f"{qty:,} {unit}".strip()
-        fields.append({"name": category[:256], "value": value[:1024], "inline": True})
+    start = 0
+
+    for index in range(column_count):
+        size = base + (1 if index < extra else 0)
+        chunk = entries[start:start + size]
+        start += size
+        lines = [f"**{label}** — {value}" for label, value in chunk]
+        fields.append({
+            "name": f"{heading} {index + 1}",
+            "value": "\n".join(lines)[:1024],
+            "inline": True,
+        })
+
     return fields
+
+
+def category_fields(categories, heading="Production"):
+    entries = [(category, f"{qty:,} crates") for category, qty in categories]
+    return three_column_fields(entries, heading=heading)
 
 
 def transport_embeds(planner, locations, items):
@@ -190,7 +211,7 @@ def transport_embeds(planner, locations, items):
             embeds.append(
                 make_embed(
                     f"🚛 TRANSPORT — {source} → {destination}",
-                    category_fields(categories),
+                    category_fields(categories, heading="Load"),
                     f"**{total:,} crates total**",
                 )
             )
@@ -215,7 +236,7 @@ def factory_embeds(planner, locations, items):
         embeds.append(
             make_embed(
                 f"🏭 FACTORY — {location_name(locations, location_id)}",
-                category_fields(categories),
+                category_fields(categories, heading="Production"),
             )
         )
     return embeds
@@ -231,7 +252,7 @@ def refinery_embeds(planner, locations, items):
         if not isinstance(payload, dict):
             continue
 
-        fields = []
+        entries = []
         for item_id, detail in sorted(payload.items(), key=lambda x: item_name(items, x[0]).lower()):
             name = item_name(items, item_id)
             if isinstance(detail, dict):
@@ -252,13 +273,13 @@ def refinery_embeds(planner, locations, items):
             else:
                 continue
 
-            fields.append({"name": name[:256], "value": value[:1024], "inline": True})
+            entries.append((name, value))
 
-        if fields:
+        if entries:
             embeds.append(
                 make_embed(
                     f"⚗️ REFINERY — {location_name(locations, location_id)}",
-                    fields,
+                    three_column_fields(entries, heading="Resources"),
                 )
             )
     return embeds
@@ -277,9 +298,11 @@ def mpf_embeds(planner, locations, items):
             if isinstance(requested, dict):
                 categories = aggregate_categories(requested, items)
 
-        fields = category_fields(categories) if categories else [
-            {"name": "Status", "value": "MPF work required", "inline": True}
-        ]
+        if categories:
+            fields = category_fields(categories, heading="Production")
+        else:
+            fields = [{"name": "Status", "value": "MPF work required", "inline": True}]
+
         embeds.append(
             make_embed(
                 f"🏗️ MPF — {location_name(locations, location_id)}",
