@@ -7,11 +7,8 @@ from PIL import Image, ImageDraw
 import foxlogi_bot as bot
 
 
-_original_draw_ranked_panel = bot.draw_ranked_panel
-
-
 def category_column_count(card_width):
-    """Use wider category boxes on narrower Transport cards."""
+    """Use wider category boxes on narrower cards."""
     return 2 if card_width < 500 else 3
 
 
@@ -41,25 +38,14 @@ def category_total_card_height(card_width, categories):
     )
 
 
-def draw_category_total_card(
-    draw,
-    x,
-    y,
-    width,
-    block,
-):
-    """Draw Transport/Factory/MPF using category totals only."""
+def draw_category_total_card(draw, x, y, width, block):
+    """Draw Transport/Factory/MPF cards using category totals only."""
     categories = block.get("categories", [])
     height = category_total_card_height(width, categories)
 
     bot.rounded_box(
         draw,
-        (
-            x,
-            y,
-            x + width,
-            y + height,
-        ),
+        (x, y, x + width, y + height),
         fill=bot.CARD_BG,
     )
 
@@ -81,10 +67,7 @@ def draw_category_total_card(
         fill=bot.TEXT,
     )
 
-    cursor_y += (
-        bot.font_height(bot.FONT_CARD_TITLE)
-        + 8
-    )
+    cursor_y += bot.font_height(bot.FONT_CARD_TITLE) + 8
 
     draw.text(
         (cursor_x, cursor_y),
@@ -93,10 +76,7 @@ def draw_category_total_card(
         fill=bot.ACCENT,
     )
 
-    cursor_y += (
-        bot.font_height(bot.FONT_SMALL)
-        + 18
-    )
+    cursor_y += bot.font_height(bot.FONT_SMALL) + 18
 
     if not categories:
         draw.text(
@@ -111,9 +91,7 @@ def draw_category_total_card(
     category_gap = 10
 
     category_width = (
-        width
-        - padding * 2
-        - category_gap * (columns - 1)
+        width - padding * 2 - category_gap * (columns - 1)
     ) // columns
 
     category_height = (
@@ -128,24 +106,12 @@ def draw_category_total_card(
         row = index // columns
         column = index % columns
 
-        box_x = (
-            cursor_x
-            + column * (category_width + category_gap)
-        )
-
-        box_y = (
-            cursor_y
-            + row * (category_height + 12)
-        )
+        box_x = cursor_x + column * (category_width + category_gap)
+        box_y = cursor_y + row * (category_height + 12)
 
         bot.rounded_box(
             draw,
-            (
-                box_x,
-                box_y,
-                box_x + category_width,
-                box_y + category_height,
-            ),
+            (box_x, box_y, box_x + category_width, box_y + category_height),
             fill=bot.INNER_BG,
             radius=12,
         )
@@ -167,10 +133,7 @@ def draw_category_total_card(
         draw.text(
             (
                 box_x + 8,
-                box_y
-                + 8
-                + bot.font_height(bot.FONT_CATEGORY)
-                + 8,
+                box_y + 8 + bot.font_height(bot.FONT_CATEGORY) + 8,
             ),
             f"{category.get('total', 0):,} crates",
             font=bot.FONT_BODY,
@@ -180,42 +143,70 @@ def draw_category_total_card(
     return height
 
 
-def draw_ranked_panel_with_wide_factory_mpf(
-    draw,
-    x,
-    y,
-    width,
-    title,
-    blocks,
-):
-    """
-    Keep Transport using two cards per row, but let an odd Factory or MPF
-    card span the full panel width.
-    """
+def transport_panel_height(blocks, panel_width):
+    """Transport cards are stacked vertically, one full-width card per row."""
+    if not blocks:
+        return 100
 
-    if title not in {"FACTORY", "MPF"}:
-        return _original_draw_ranked_panel(
-            draw,
-            x,
-            y,
-            width,
-            title,
-            blocks,
+    inner_width = panel_width - 36
+    card_gap = 14
+    height = 65
+
+    for block in blocks:
+        height += category_total_card_height(
+            inner_width,
+            block.get("categories", []),
+        ) + card_gap
+
+    return height + 10
+
+
+def standard_ranked_panel_height(blocks, panel_width):
+    """Factory and MPF use two cards per row, with odd final card full width."""
+    if not blocks:
+        return 100
+
+    inner_width = panel_width - 36
+    card_gap = 14
+    half_card_width = (inner_width - card_gap) // 2
+    height = 65
+    index = 0
+
+    while index < len(blocks):
+        remaining = len(blocks) - index
+
+        if remaining == 1:
+            card_height = category_total_card_height(
+                inner_width,
+                blocks[index].get("categories", []),
+            )
+            height += card_height + card_gap
+            break
+
+        left_height = category_total_card_height(
+            half_card_width,
+            blocks[index].get("categories", []),
         )
+        right_height = category_total_card_height(
+            half_card_width,
+            blocks[index + 1].get("categories", []),
+        )
+        height += max(left_height, right_height) + card_gap
+        index += 2
 
-    panel_height = bot.ranked_panel_height(
-        blocks,
-        width,
+    return height + 10
+
+
+def draw_transport_panel(draw, x, y, width, blocks, forced_height=None):
+    panel_height = (
+        forced_height
+        if forced_height is not None
+        else transport_panel_height(blocks, width)
     )
 
     bot.rounded_box(
         draw,
-        (
-            x,
-            y,
-            x + width,
-            y + panel_height,
-        ),
+        (x, y, x + width, y + panel_height),
         fill=bot.PANEL_BG,
         width=2,
         radius=22,
@@ -226,20 +217,11 @@ def draw_ranked_panel_with_wide_factory_mpf(
         x + 18,
         y + 16,
         width - 36,
-        title,
-        (
-            f"{len(blocks)} active"
-            if blocks
-            else None
-        ),
+        "TRANSPORT",
+        f"{len(blocks)} active" if blocks else None,
     )
 
-    cursor_y = (
-        y
-        + 16
-        + bot.font_height(bot.FONT_SECTION)
-        + 18
-    )
+    cursor_y = y + 16 + bot.font_height(bot.FONT_SECTION) + 18
 
     if not blocks:
         draw.text(
@@ -252,68 +234,26 @@ def draw_ranked_panel_with_wide_factory_mpf(
 
     inner_width = width - 36
     card_gap = 14
-    half_card_width = (
-        inner_width - card_gap
-    ) // 2
 
-    index = 0
-
-    while index < len(blocks):
-        remaining = len(blocks) - index
-
-        if remaining == 1:
-            card_height = bot.draw_ranked_card(
-                draw,
-                x + 18,
-                cursor_y,
-                inner_width,
-                blocks[index],
-            )
-            cursor_y += card_height + card_gap
-            break
-
-        left_height = bot.draw_ranked_card(
+    for block in blocks:
+        card_height = draw_category_total_card(
             draw,
             x + 18,
             cursor_y,
-            half_card_width,
-            blocks[index],
+            inner_width,
+            block,
         )
-
-        right_height = bot.draw_ranked_card(
-            draw,
-            x + 18 + half_card_width + card_gap,
-            cursor_y,
-            half_card_width,
-            blocks[index + 1],
-        )
-
-        cursor_y += (
-            max(left_height, right_height)
-            + card_gap
-        )
-        index += 2
+        cursor_y += card_height + card_gap
 
     return panel_height
 
 
-def draw_transport_full_height_panel(
-    draw,
-    x,
-    y,
-    width,
-    height,
-    blocks,
-):
-    """Draw Transport as one panel extending to the bottom of the dashboard."""
+def draw_standard_ranked_panel(draw, x, y, width, title, blocks):
+    panel_height = standard_ranked_panel_height(blocks, width)
+
     bot.rounded_box(
         draw,
-        (
-            x,
-            y,
-            x + width,
-            y + height,
-        ),
+        (x, y, x + width, y + panel_height),
         fill=bot.PANEL_BG,
         width=2,
         radius=22,
@@ -324,20 +264,11 @@ def draw_transport_full_height_panel(
         x + 18,
         y + 16,
         width - 36,
-        "TRANSPORT",
-        (
-            f"{len(blocks)} active"
-            if blocks
-            else None
-        ),
+        title,
+        f"{len(blocks)} active" if blocks else None,
     )
 
-    cursor_y = (
-        y
-        + 16
-        + bot.font_height(bot.FONT_SECTION)
-        + 18
-    )
+    cursor_y = y + 16 + bot.font_height(bot.FONT_SECTION) + 18
 
     if not blocks:
         draw.text(
@@ -346,90 +277,128 @@ def draw_transport_full_height_panel(
             font=bot.FONT_BODY,
             fill=bot.MUTED,
         )
-        return
+        return panel_height
 
     inner_width = width - 36
     card_gap = 14
-    card_width = (
-        inner_width - card_gap
-    ) // 2
+    half_card_width = (inner_width - card_gap) // 2
+    index = 0
+
+    while index < len(blocks):
+        remaining = len(blocks) - index
+
+        if remaining == 1:
+            card_height = draw_category_total_card(
+                draw,
+                x + 18,
+                cursor_y,
+                inner_width,
+                blocks[index],
+            )
+            cursor_y += card_height + card_gap
+            break
+
+        left_height = draw_category_total_card(
+            draw,
+            x + 18,
+            cursor_y,
+            half_card_width,
+            blocks[index],
+        )
+
+        right_height = draw_category_total_card(
+            draw,
+            x + 18 + half_card_width + card_gap,
+            cursor_y,
+            half_card_width,
+            blocks[index + 1],
+        )
+
+        cursor_y += max(left_height, right_height) + card_gap
+        index += 2
+
+    return panel_height
+
+
+def draw_refinery_panel(draw, x, y, width, blocks):
+    panel_height = bot.refinery_panel_height(blocks, width)
+
+    bot.rounded_box(
+        draw,
+        (x, y, x + width, y + panel_height),
+        fill=bot.PANEL_BG,
+        width=2,
+        radius=22,
+    )
+
+    bot.draw_panel_title(
+        draw,
+        x + 18,
+        y + 16,
+        width - 36,
+        "REFINERY",
+        f"{len(blocks)} active" if blocks else None,
+    )
+
+    cursor_y = y + 16 + bot.font_height(bot.FONT_SECTION) + 18
+
+    if not blocks:
+        draw.text(
+            (x + 18, cursor_y),
+            "No outstanding tasks",
+            font=bot.FONT_BODY,
+            fill=bot.MUTED,
+        )
+        return panel_height
+
+    inner_width = width - 36
+    card_gap = 14
+    card_width = (inner_width - card_gap) // 2
     row_height = 0
 
     for index, block in enumerate(blocks):
         column = index % 2
-        card_x = (
-            x
-            + 18
-            + column * (card_width + card_gap)
-        )
-
-        card_height = bot.draw_ranked_card(
+        card_x = x + 18 + column * (card_width + card_gap)
+        card_height = bot.draw_refinery_card(
             draw,
             card_x,
             cursor_y,
             card_width,
             block,
         )
-
         row_height = max(row_height, card_height)
-
         if column == 1:
             cursor_y += row_height + card_gap
             row_height = 0
 
+    return panel_height
 
-def render_dashboard_stacked_right(
-    transport,
-    factory,
-    refinery,
-    mpf,
-):
-    """
-    Layout:
-      Left:  Transport from the top down to the bottom.
-      Right: Factory, then MPF, then Refinery stacked vertically.
-    """
-    panel_width = (
-        bot.CANVAS_WIDTH
-        - bot.MARGIN * 2
-        - bot.PANEL_GAP
-    ) // 2
 
-    factory_height = bot.ranked_panel_height(
-        factory,
-        panel_width,
-    )
-    mpf_height = bot.ranked_panel_height(
-        mpf,
-        panel_width,
-    )
-    refinery_height = bot.refinery_panel_height(
-        refinery,
-        panel_width,
-    )
-    transport_natural_height = bot.ranked_panel_height(
-        transport,
-        panel_width,
-    )
+def render_dashboard_custom(transport, factory, refinery, mpf):
+    panel_width = (bot.CANVAS_WIDTH - bot.MARGIN * 2 - bot.PANEL_GAP) // 2
 
-    right_stack_height = (
-        factory_height
+    right_factory_h = standard_ranked_panel_height(factory, panel_width)
+    right_mpf_h = standard_ranked_panel_height(mpf, panel_width)
+    right_refinery_h = bot.refinery_panel_height(refinery, panel_width)
+
+    right_column_total = (
+        right_factory_h
         + bot.PANEL_GAP
-        + mpf_height
+        + right_mpf_h
         + bot.PANEL_GAP
-        + refinery_height
+        + right_refinery_h
     )
 
-    content_height = max(
-        right_stack_height,
-        transport_natural_height,
+    left_transport_h = max(
+        transport_panel_height(transport, panel_width),
+        right_column_total,
     )
 
     header_height = 110
     canvas_height = (
         bot.MARGIN
         + header_height
-        + content_height
+        + max(left_transport_h, right_column_total)
         + bot.MARGIN
     )
     canvas_height = max(canvas_height, 900)
@@ -445,22 +414,18 @@ def render_dashboard_stacked_right(
 
     panel_y = bot.MARGIN + header_height
     left_x = bot.MARGIN
-    right_x = (
-        bot.MARGIN
-        + panel_width
-        + bot.PANEL_GAP
-    )
+    right_x = bot.MARGIN + panel_width + bot.PANEL_GAP
 
-    draw_transport_full_height_panel(
+    draw_transport_panel(
         draw,
         left_x,
         panel_y,
         panel_width,
-        content_height,
         transport,
+        forced_height=left_transport_h,
     )
 
-    bot.draw_ranked_panel(
+    draw_standard_ranked_panel(
         draw,
         right_x,
         panel_y,
@@ -469,13 +434,8 @@ def render_dashboard_stacked_right(
         factory,
     )
 
-    mpf_y = (
-        panel_y
-        + factory_height
-        + bot.PANEL_GAP
-    )
-
-    bot.draw_ranked_panel(
+    mpf_y = panel_y + right_factory_h + bot.PANEL_GAP
+    draw_standard_ranked_panel(
         draw,
         right_x,
         mpf_y,
@@ -484,13 +444,8 @@ def render_dashboard_stacked_right(
         mpf,
     )
 
-    refinery_y = (
-        mpf_y
-        + mpf_height
-        + bot.PANEL_GAP
-    )
-
-    bot.draw_refinery_panel(
+    refinery_y = mpf_y + right_mpf_h + bot.PANEL_GAP
+    draw_refinery_panel(
         draw,
         right_x,
         refinery_y,
@@ -499,21 +454,13 @@ def render_dashboard_stacked_right(
     )
 
     footer = "Outstanding crates shown by category | Source: Foxlogi"
-    footer_box = draw.textbbox(
-        (0, 0),
-        footer,
-        font=bot.FONT_SMALL,
-    )
+    footer_box = draw.textbbox((0, 0), footer, font=bot.FONT_SMALL)
     footer_width = footer_box[2] - footer_box[0]
 
     draw.text(
         (
-            bot.CANVAS_WIDTH
-            - bot.MARGIN
-            - footer_width,
-            canvas_height
-            - bot.MARGIN
-            + 3,
+            image.width - bot.MARGIN - footer_width,
+            image.height - bot.MARGIN + 3,
         ),
         footer,
         font=bot.FONT_SMALL,
@@ -529,8 +476,7 @@ def render_dashboard_stacked_right(
 
 bot.ranked_card_height = category_total_card_height
 bot.draw_ranked_card = draw_category_total_card
-bot.draw_ranked_panel = draw_ranked_panel_with_wide_factory_mpf
-bot.render_dashboard = render_dashboard_stacked_right
+bot.render_dashboard = render_dashboard_custom
 
 
 if __name__ == "__main__":
