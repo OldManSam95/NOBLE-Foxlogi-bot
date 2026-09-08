@@ -2,18 +2,148 @@
 
 import math
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 import foxlogi_bot as bot
 
 
+# ============================================================
+# FOXLOGI-STYLE DARK PALETTE
+# ============================================================
+
+bot.BACKGROUND = "#141414"
+bot.PANEL_BG = "#1F1F1F"
+bot.CARD_BG = "#262626"
+bot.INNER_BG = "#303030"
+bot.TEXT = "#F0F0F0"
+bot.MUTED = "#8C8C8C"
+bot.ACCENT = "#1677FF"
+bot.BORDER = "#424242"
+bot.CATEGORY_COLOUR = "#BFBFBF"
+
+CATEGORY_COLOURS = {
+    "Small Arms": "#91CAFF",
+    "Heavy Arms": "#FF9C8F",
+    "Heavy Ammunition": "#FFA940",
+    "Utility": "#FFEC3D",
+    "Medical": "#95DE64",
+    "Supplies": "#BFBFBF",
+    "Resources": "#BFBFBF",
+    "Uniforms": "#85A5FF",
+    "Vehicles": "#BFBFBF",
+    "Structures": "#D3ADF7",
+    "Other": "#BFBFBF",
+}
+
+
+# ============================================================
+# TRUE 2X / HiDPI RENDERING
+# ============================================================
+
+RENDER_SCALE = 2
+
+
+class HiDPIDraw:
+    """
+    Presents a normal 1600px logical drawing surface to the existing layout,
+    while rendering every coordinate, border and font at 2x physical size.
+    """
+
+    def __init__(self, image):
+        self._draw = ImageDraw.Draw(image)
+        self._font_cache = {}
+
+    @staticmethod
+    def _scale_number(value):
+        return int(round(value * RENDER_SCALE))
+
+    @classmethod
+    def _scale_box(cls, box):
+        return tuple(cls._scale_number(value) for value in box)
+
+    @classmethod
+    def _scale_xy(cls, xy):
+        return tuple(cls._scale_number(value) for value in xy)
+
+    def _scaled_font(self, font):
+        if font is None:
+            return None
+
+        key = id(font)
+        cached = self._font_cache.get(key)
+        if cached is not None:
+            return cached
+
+        path = getattr(font, "path", None)
+        size = getattr(font, "size", None)
+
+        if path and size:
+            scaled = ImageFont.truetype(
+                path,
+                size=max(1, int(round(size * RENDER_SCALE))),
+            )
+        else:
+            scaled = font
+
+        self._font_cache[key] = scaled
+        return scaled
+
+    def text(self, xy, text, font=None, fill=None, **kwargs):
+        return self._draw.text(
+            self._scale_xy(xy),
+            text,
+            font=self._scaled_font(font),
+            fill=fill,
+            **kwargs,
+        )
+
+    def textbbox(self, xy, text, font=None, **kwargs):
+        physical = self._draw.textbbox(
+            self._scale_xy(xy),
+            text,
+            font=self._scaled_font(font),
+            **kwargs,
+        )
+        return tuple(value / RENDER_SCALE for value in physical)
+
+    def rounded_rectangle(
+        self,
+        xy,
+        radius=0,
+        fill=None,
+        outline=None,
+        width=1,
+        **kwargs,
+    ):
+        return self._draw.rounded_rectangle(
+            self._scale_box(xy),
+            radius=self._scale_number(radius),
+            fill=fill,
+            outline=outline,
+            width=max(1, self._scale_number(width)),
+            **kwargs,
+        )
+
+    def rectangle(self, xy, fill=None, outline=None, width=1, **kwargs):
+        return self._draw.rectangle(
+            self._scale_box(xy),
+            fill=fill,
+            outline=outline,
+            width=max(1, self._scale_number(width)),
+            **kwargs,
+        )
+
+
+# ============================================================
+# COMPACT CATEGORY-TOTAL CARDS
+# ============================================================
+
+
 def category_column_count(card_width):
-    """Use wider category boxes on narrower cards."""
     return 2 if card_width < 500 else 3
 
 
 def category_total_card_height(card_width, categories):
-    """Compact card height when only category crate totals are shown."""
     padding = 16
     columns = category_column_count(card_width)
     rows = max(1, math.ceil(len(categories) / columns))
@@ -39,7 +169,6 @@ def category_total_card_height(card_width, categories):
 
 
 def draw_category_total_card(draw, x, y, width, block):
-    """Draw Transport/Factory/MPF cards using category totals only."""
     categories = block.get("categories", [])
     height = category_total_card_height(width, categories)
 
@@ -109,16 +238,23 @@ def draw_category_total_card(draw, x, y, width, block):
         box_x = cursor_x + column * (category_width + category_gap)
         box_y = cursor_y + row * (category_height + 12)
 
+        category_name = category.get("category", "Other")
+        category_colour = CATEGORY_COLOURS.get(
+            category_name,
+            CATEGORY_COLOURS["Other"],
+        )
+
         bot.rounded_box(
             draw,
             (box_x, box_y, box_x + category_width, box_y + category_height),
             fill=bot.INNER_BG,
+            outline=category_colour,
             radius=12,
         )
 
         category_title = bot.ellipsize(
             draw,
-            category.get("category", ""),
+            category_name,
             bot.FONT_CATEGORY,
             category_width - 16,
         )
@@ -127,7 +263,7 @@ def draw_category_total_card(draw, x, y, width, block):
             (box_x + 8, box_y + 8),
             category_title,
             font=bot.FONT_CATEGORY,
-            fill=bot.CATEGORY_COLOUR,
+            fill=category_colour,
         )
 
         draw.text(
@@ -137,14 +273,18 @@ def draw_category_total_card(draw, x, y, width, block):
             ),
             f"{category.get('total', 0):,} crates",
             font=bot.FONT_BODY,
-            fill=bot.ACCENT,
+            fill=bot.TEXT,
         )
 
     return height
 
 
+# ============================================================
+# PANEL HEIGHTS
+# ============================================================
+
+
 def transport_panel_height(blocks, panel_width):
-    """Transport cards are stacked vertically, one full-width card per row."""
     if not blocks:
         return 100
 
@@ -162,7 +302,6 @@ def transport_panel_height(blocks, panel_width):
 
 
 def standard_ranked_panel_height(blocks, panel_width):
-    """Factory and MPF use two cards per row, with odd final card full width."""
     if not blocks:
         return 100
 
@@ -176,11 +315,10 @@ def standard_ranked_panel_height(blocks, panel_width):
         remaining = len(blocks) - index
 
         if remaining == 1:
-            card_height = category_total_card_height(
+            height += category_total_card_height(
                 inner_width,
                 blocks[index].get("categories", []),
-            )
-            height += card_height + card_gap
+            ) + card_gap
             break
 
         left_height = category_total_card_height(
@@ -195,6 +333,11 @@ def standard_ranked_panel_height(blocks, panel_width):
         index += 2
 
     return height + 10
+
+
+# ============================================================
+# PANEL DRAWING
+# ============================================================
 
 
 def draw_transport_panel(draw, x, y, width, blocks, forced_height=None):
@@ -374,6 +517,11 @@ def draw_refinery_panel(draw, x, y, width, blocks):
     return panel_height
 
 
+# ============================================================
+# DASHBOARD RENDERER
+# ============================================================
+
+
 def render_dashboard_custom(transport, factory, refinery, mpf):
     panel_width = (bot.CANVAS_WIDTH - bot.MARGIN * 2 - bot.PANEL_GAP) // 2
 
@@ -395,20 +543,23 @@ def render_dashboard_custom(transport, factory, refinery, mpf):
     )
 
     header_height = 110
-    canvas_height = (
+    logical_canvas_height = (
         bot.MARGIN
         + header_height
         + max(left_transport_h, right_column_total)
         + bot.MARGIN
     )
-    canvas_height = max(canvas_height, 900)
+    logical_canvas_height = max(logical_canvas_height, 900)
 
     image = Image.new(
         "RGB",
-        (bot.CANVAS_WIDTH, canvas_height),
+        (
+            bot.CANVAS_WIDTH * RENDER_SCALE,
+            logical_canvas_height * RENDER_SCALE,
+        ),
         bot.BACKGROUND,
     )
-    draw = ImageDraw.Draw(image)
+    draw = HiDPIDraw(image)
 
     bot.draw_header(draw)
 
@@ -459,8 +610,8 @@ def render_dashboard_custom(transport, factory, refinery, mpf):
 
     draw.text(
         (
-            image.width - bot.MARGIN - footer_width,
-            image.height - bot.MARGIN + 3,
+            bot.CANVAS_WIDTH - bot.MARGIN - footer_width,
+            logical_canvas_height - bot.MARGIN + 3,
         ),
         footer,
         font=bot.FONT_SMALL,
@@ -471,6 +622,7 @@ def render_dashboard_custom(transport, factory, refinery, mpf):
         bot.OUTPUT_IMAGE,
         format="PNG",
         optimize=True,
+        dpi=(192, 192),
     )
 
 
