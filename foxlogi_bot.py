@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 FOXLOGI_URL = "https://foxlogi.com/api/logistic/planner/"
 FOXLOGI_API_KEY = os.environ["FOXLOGI_API_KEY"].strip()
 DISCORD_WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"].strip()
-USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.7"
+USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.8"
 
 CATEGORY_LABELS = {
     "smallarms": "Small Arms",
@@ -233,10 +233,12 @@ def factory_embeds(planner, locations, items):
         categories = aggregate_categories(requested, items)
         if not categories:
             continue
+        total = sum(qty for _, qty in categories)
         embeds.append(
             make_embed(
                 f"🏭 FACTORY — {location_name(locations, location_id)}",
                 category_fields(categories),
+                f"**{total:,} crates total**",
             )
         )
     return embeds
@@ -300,13 +302,17 @@ def mpf_embeds(planner, locations, items):
 
         if categories:
             fields = category_fields(categories)
+            total = sum(qty for _, qty in categories)
+            description = f"**{total:,} crates total**"
         else:
             fields = [{"name": "\u200b", "value": "MPF work required", "inline": True}]
+            description = None
 
         embeds.append(
             make_embed(
                 f"🏗️ MPF — {location_name(locations, location_id)}",
                 fields,
+                description,
             )
         )
     return embeds
