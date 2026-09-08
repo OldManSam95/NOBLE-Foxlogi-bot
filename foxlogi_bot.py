@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 import json
 import os
-import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 FOXLOGI_URL = "https://foxlogi.com/api/logistic/planner/"
 FOXLOGI_API_KEY = os.environ["FOXLOGI_API_KEY"].strip()
 DISCORD_WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"].strip()
-USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.4"
+USER_AGENT = "NOBLE-Foxlogi-Bot-Test/0.5"
 
 CATEGORY_LABELS = {
     "smallarms": "Small Arms",
@@ -60,11 +60,17 @@ def get_json(url, headers=None):
         raise RuntimeError(f"GET {url} returned HTTP {exc.code}: {detail}") from exc
 
 
-def post_discord(content):
-    payload = json.dumps({"content": content, "allowed_mentions": {"parse": []}}).encode("utf-8")
+def post_discord(*, content=None, embeds=None):
+    payload = {"allowed_mentions": {"parse": []}}
+    if content:
+        payload["content"] = content
+    if embeds:
+        payload["embeds"] = embeds
+
+    data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         DISCORD_WEBHOOK_URL,
-        data=payload,
+        data=data,
         headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
         method="POST",
     )
@@ -131,11 +137,31 @@ def aggregate_categories(item_quantities, items, fallback="Other"):
     return sorted(totals.items(), key=lambda x: category_sort_key(x[0]))
 
 
-def format_transport(planner, locations, items):
-    lines = []
+def make_embed(title, fields, description=None):
+    embed = {
+        "title": title[:256],
+        "fields": fields[:25],
+        "footer": {"text": "Test post • Source: Foxlogi"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if description:
+        embed["description"] = description[:4096]
+    return embed
+
+
+def category_fields(categories, unit="crates"):
+    fields = []
+    for category, qty in categories:
+        value = f"{qty:,} {unit}".strip()
+        fields.append({"name": category[:256], "value": value[:1024], "inline": True})
+    return fields
+
+
+def transport_embeds(planner, locations, items):
+    embeds = []
     transport = planner.get("transport") or {}
     if not isinstance(transport, dict):
-        return lines
+        return embeds
 
     for destination_id, source_map in transport.items():
         if not isinstance(source_map, dict):
@@ -161,17 +187,21 @@ def format_transport(planner, locations, items):
             source = location_name(locations, source_id)
             destination = location_name(locations, destination_id)
             total = sum(qty for _, qty in categories)
-            lines.append(f"**{source} → {destination}** — {total:,} crates")
-            for category, qty in categories:
-                lines.append(f"• {category} — {qty:,} crates")
-    return lines
+            embeds.append(
+                make_embed(
+                    f"🚛 TRANSPORT — {source} → {destination}",
+                    category_fields(categories),
+                    f"**{total:,} crates total**",
+                )
+            )
+    return embeds
 
 
-def format_craft(planner, locations, items):
-    lines = []
+def factory_embeds(planner, locations, items):
+    embeds = []
     craft = planner.get("craft") or {}
     if not isinstance(craft, dict):
-        return lines
+        return embeds
 
     for location_id, payload in craft.items():
         if not isinstance(payload, dict):
@@ -182,24 +212,26 @@ def format_craft(planner, locations, items):
         categories = aggregate_categories(requested, items)
         if not categories:
             continue
+        embeds.append(
+            make_embed(
+                f"🏭 FACTORY — {location_name(locations, location_id)}",
+                category_fields(categories),
+            )
+        )
+    return embeds
 
-        lines.append(f"**{location_name(locations, location_id)}**")
-        for category, qty in categories:
-            lines.append(f"• {category} — {qty:,} crates")
-    return lines
 
-
-def format_refinery(planner, locations, items):
-    lines = []
+def refinery_embeds(planner, locations, items):
+    embeds = []
     resource = planner.get("resource") or {}
     if not isinstance(resource, dict):
-        return lines
+        return embeds
 
     for location_id, payload in resource.items():
         if not isinstance(payload, dict):
             continue
 
-        resource_lines = []
+        fields = []
         for item_id, detail in sorted(payload.items(), key=lambda x: item_name(items, x[0]).lower()):
             name = item_name(items, item_id)
             if isinstance(detail, dict):
@@ -212,23 +244,31 @@ def format_refinery(planner, locations, items):
                 raw_input = 0
 
             if amount > 0:
-                resource_lines.append(f"• {name} — {amount:,}")
+                value = f"{amount:,}"
             elif output > 0:
-                resource_lines.append(f"• {name} — {output:,} output")
+                value = f"{output:,} output"
             elif raw_input > 0:
-                resource_lines.append(f"• {name} — {raw_input:,} raw required")
+                value = f"{raw_input:,} raw required"
+            else:
+                continue
 
-        if resource_lines:
-            lines.append(f"**{location_name(locations, location_id)}**")
-            lines.extend(resource_lines)
-    return lines
+            fields.append({"name": name[:256], "value": value[:1024], "inline": True})
+
+        if fields:
+            embeds.append(
+                make_embed(
+                    f"⚗️ REFINERY — {location_name(locations, location_id)}",
+                    fields,
+                )
+            )
+    return embeds
 
 
-def format_mpf(planner, locations, items):
-    lines = []
+def mpf_embeds(planner, locations, items):
+    embeds = []
     mpf = planner.get("mpf") or {}
     if not isinstance(mpf, dict):
-        return lines
+        return embeds
 
     for location_id, payload in mpf.items():
         categories = []
@@ -237,64 +277,44 @@ def format_mpf(planner, locations, items):
             if isinstance(requested, dict):
                 categories = aggregate_categories(requested, items)
 
-        lines.append(f"**{location_name(locations, location_id)}**")
-        if categories:
-            for category, qty in categories:
-                lines.append(f"• {category} — {qty:,} crates")
-        else:
-            lines.append("• MPF work required")
-    return lines
+        fields = category_fields(categories) if categories else [
+            {"name": "Status", "value": "MPF work required", "inline": True}
+        ]
+        embeds.append(
+            make_embed(
+                f"🏗️ MPF — {location_name(locations, location_id)}",
+                fields,
+            )
+        )
+    return embeds
 
 
-def build_message(planner):
-    if not isinstance(planner, dict):
-        raise RuntimeError("Foxlogi returned an unexpected planner response")
-
-    locations = planner.get("locations") if isinstance(planner.get("locations"), dict) else {}
-    items = planner.get("items") if isinstance(planner.get("items"), dict) else {}
-
-    sections = [
-        ("🚛 TRANSPORT", format_transport(planner, locations, items)),
-        ("🏭 FACTORY", format_craft(planner, locations, items)),
-        ("⚗️ REFINERY", format_refinery(planner, locations, items)),
-        ("🏗️ MPF", format_mpf(planner, locations, items)),
-    ]
-
-    timestamp = int(time.time())
-    lines = [
-        "# 🚚 NOBLE FOXLOGI TEST",
-        f"*Current logistics tasks • Generated <t:{timestamp}:R>*",
-        "",
-    ]
-
-    task_count = 0
-    for heading, body in sections:
-        if not body:
-            continue
-        task_count += 1
-        lines.extend([f"## {heading}", *body, ""])
-
-    if task_count == 0:
-        lines.extend(["✅ **No outstanding logistics tasks were returned by Foxlogi.**", ""])
-
-    lines.append("-# Test post • Source: Foxlogi")
-    return "\n".join(lines).strip()
+def embed_char_count(embed):
+    total = len(embed.get("title", "")) + len(embed.get("description", ""))
+    footer = embed.get("footer") or {}
+    total += len(footer.get("text", ""))
+    for field in embed.get("fields", []):
+        total += len(field.get("name", "")) + len(field.get("value", ""))
+    return total
 
 
-def split_for_discord(text, limit=1900):
-    chunks = []
-    current = ""
-    for line in text.splitlines():
-        candidate = line if not current else current + "\n" + line
-        if len(candidate) <= limit:
-            current = candidate
-            continue
-        if current:
-            chunks.append(current)
-        current = line
+def batch_embeds(embeds, max_embeds=10, max_chars=5500):
+    batches = []
+    current = []
+    chars = 0
+
+    for embed in embeds:
+        size = embed_char_count(embed)
+        if current and (len(current) >= max_embeds or chars + size > max_chars):
+            batches.append(current)
+            current = []
+            chars = 0
+        current.append(embed)
+        chars += size
+
     if current:
-        chunks.append(current)
-    return chunks
+        batches.append(current)
+    return batches
 
 
 def main():
@@ -302,15 +322,31 @@ def main():
         FOXLOGI_URL,
         headers={"Authorization": f"Bearer {FOXLOGI_API_KEY}"},
     )
-    message = build_message(planner)
-    chunks = split_for_discord(message)
+    if not isinstance(planner, dict):
+        raise RuntimeError("Foxlogi returned an unexpected planner response")
 
-    for index, chunk in enumerate(chunks, start=1):
-        if len(chunks) > 1:
-            chunk = f"**Part {index}/{len(chunks)}**\n{chunk}"
-        post_discord(chunk)
+    locations = planner.get("locations") if isinstance(planner.get("locations"), dict) else {}
+    items = planner.get("items") if isinstance(planner.get("items"), dict) else {}
 
-    print(f"Posted {len(chunks)} Discord message(s).")
+    embeds = []
+    embeds.extend(transport_embeds(planner, locations, items))
+    embeds.extend(factory_embeds(planner, locations, items))
+    embeds.extend(refinery_embeds(planner, locations, items))
+    embeds.extend(mpf_embeds(planner, locations, items))
+
+    if not embeds:
+        post_discord(content="✅ **NOBLE FOXLOGI TEST** — No outstanding logistics tasks were returned by Foxlogi.")
+        print("Posted 1 Discord message with no outstanding tasks.")
+        return
+
+    batches = batch_embeds(embeds)
+    for index, batch in enumerate(batches, start=1):
+        content = "**🚚 NOBLE FOXLOGI TEST**"
+        if len(batches) > 1:
+            content += f" — Part {index}/{len(batches)}"
+        post_discord(content=content, embeds=batch)
+
+    print(f"Posted {len(embeds)} embed(s) across {len(batches)} Discord message(s).")
 
 
 if __name__ == "__main__":
