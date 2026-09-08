@@ -18,4 +18,4 @@ jobs:
         env:
           FOXLOGI_API_KEY: ${{ secrets.FOXLOGI_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: python refinery_runner.py
+        run: python discord_message_runner.py
