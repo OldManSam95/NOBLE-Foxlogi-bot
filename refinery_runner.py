@@ -9,6 +9,167 @@ bot = dash.bot
 
 
 # ============================================================
+# COMPACT FACTORY / TRANSPORT / MPF HEADERS
+# ============================================================
+
+
+def category_total_card_height(card_width, categories):
+    """Remove the separate total-crates row to save vertical space."""
+    padding = 16
+    columns = dash.category_column_count(card_width)
+    rows = max(1, math.ceil(len(categories) / columns))
+
+    category_box_height = (
+        12
+        + bot.font_height(bot.FONT_CATEGORY)
+        + 8
+        + bot.font_height(bot.FONT_BODY)
+        + 12
+    )
+
+    header_height = max(
+        bot.font_height(bot.FONT_CARD_TITLE),
+        bot.font_height(bot.FONT_SMALL),
+    )
+
+    return (
+        padding
+        + header_height
+        + 16
+        + rows * category_box_height
+        + max(0, rows - 1) * 12
+        + padding
+    )
+
+
+def draw_category_total_card(draw, x, y, width, block):
+    """Show the total crates in white on the same line as the route/location."""
+    categories = block.get("categories", [])
+    height = category_total_card_height(width, categories)
+
+    bot.rounded_box(
+        draw,
+        (x, y, x + width, y + height),
+        fill=bot.CARD_BG,
+    )
+
+    padding = 16
+    cursor_x = x + padding
+    cursor_y = y + padding
+
+    total_text = f"{block.get('total', 0):,} crates total"
+    total_box = draw.textbbox((0, 0), total_text, font=bot.FONT_SMALL)
+    total_width = total_box[2] - total_box[0]
+
+    title_height = bot.font_height(bot.FONT_CARD_TITLE)
+    total_height = bot.font_height(bot.FONT_SMALL)
+    header_height = max(title_height, total_height)
+
+    title_max_width = width - padding * 2 - total_width - 16
+    title = bot.ellipsize(
+        draw,
+        block.get("title", ""),
+        bot.FONT_CARD_TITLE,
+        max(80, title_max_width),
+    )
+
+    draw.text(
+        (cursor_x, cursor_y),
+        title,
+        font=bot.FONT_CARD_TITLE,
+        fill=bot.TEXT,
+    )
+
+    draw.text(
+        (
+            x + width - padding - total_width,
+            cursor_y + max(0, (header_height - total_height) / 2),
+        ),
+        total_text,
+        font=bot.FONT_SMALL,
+        fill=bot.TEXT,
+    )
+
+    cursor_y += header_height + 16
+
+    if not categories:
+        draw.text(
+            (cursor_x, cursor_y),
+            "No outstanding tasks",
+            font=bot.FONT_BODY,
+            fill=bot.MUTED,
+        )
+        return height
+
+    columns = dash.category_column_count(width)
+    category_gap = 10
+
+    category_width = (
+        width - padding * 2 - category_gap * (columns - 1)
+    ) // columns
+
+    category_height = (
+        12
+        + bot.font_height(bot.FONT_CATEGORY)
+        + 8
+        + bot.font_height(bot.FONT_BODY)
+        + 12
+    )
+
+    for index, category in enumerate(categories):
+        row = index // columns
+        column = index % columns
+
+        box_x = cursor_x + column * (category_width + category_gap)
+        box_y = cursor_y + row * (category_height + 12)
+
+        category_name = category.get("category", "Other")
+        category_colour = dash.CATEGORY_COLOURS.get(
+            category_name,
+            dash.CATEGORY_COLOURS["Other"],
+        )
+
+        bot.rounded_box(
+            draw,
+            (box_x, box_y, box_x + category_width, box_y + category_height),
+            fill=bot.INNER_BG,
+            outline=category_colour,
+            radius=12,
+        )
+
+        category_title = bot.ellipsize(
+            draw,
+            category_name,
+            bot.FONT_CATEGORY,
+            category_width - 16,
+        )
+
+        draw.text(
+            (box_x + 8, box_y + 8),
+            category_title,
+            font=bot.FONT_CATEGORY,
+            fill=category_colour,
+        )
+
+        draw.text(
+            (
+                box_x + 8,
+                box_y + 8 + bot.font_height(bot.FONT_CATEGORY) + 8,
+            ),
+            f"{category.get('total', 0):,} crates",
+            font=bot.FONT_BODY,
+            fill=bot.TEXT,
+        )
+
+    return height
+
+
+# Patch the dashboard category cards before the main renderer runs.
+dash.category_total_card_height = category_total_card_height
+dash.draw_category_total_card = draw_category_total_card
+
+
+# ============================================================
 # REFINERY MATERIAL BOXES
 # ============================================================
 
@@ -145,7 +306,6 @@ def refinery_panel_height(blocks, panel_width):
     while index < len(blocks):
         remaining = len(blocks) - index
 
-        # Let an odd final refinery location use the full panel width.
         if remaining == 1:
             height += refinery_material_card_height(
                 inner_width,
